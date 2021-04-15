@@ -2,8 +2,6 @@
 Currently only looking at professional games, treating all sub-patches as identical
 '''
 
-# test change 2
-
 # todo vary input parameters using forward or backward wrapper
 
 import requests
