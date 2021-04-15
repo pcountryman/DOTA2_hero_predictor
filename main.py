@@ -360,7 +360,7 @@ print('done with SVC')
 '''
 Current model has information leaking somehow. Training sets are all scoring perfectly, some unique info
 is entering the model. Unclear what it is.
-'''
+
 # build a pipeline to standardize the input data and generate a model
 # MinMaxScaler required as Chi2 only works for positive input values
 pipe = Pipeline([('scaler', StandardScaler()),
@@ -395,4 +395,6 @@ plt.clf()
 report = classification_report(y_test, CV.predict(X_test), target_names=['not_buffed', 'buffed'], output_dict=True)
 pd.DataFrame(report).T.to_csv('RFC_classification_report.csv')
 print('done with RFC')
+'''
+
 # todo add logistic regression
