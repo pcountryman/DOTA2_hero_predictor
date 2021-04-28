@@ -1,9 +1,6 @@
-'''
-Currently only looking at professional games, treating all sub-patches as identical
-'''
-
-# todo vary input parameters using forward or backward wrapper
-
+"""
+Currently only looking at all semi-pro and above games, treating all sub-patches as identical
+"""
 import requests
 import bs4
 import string
@@ -20,16 +17,23 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import math
+import tensorflow as tf
+from tensorflow import keras
+
+# which models to attempt to fit
+knn = 'no'
+svc = 'no'
+ann = 'yes'
 
 # minimum number of games to count
 min_games = 10
 
 # todo temporary buff adjuster
-buff_adjuster = 0.5
+buff_adjuster = 2
 
 # create variable to investigate patches, where most recent patch is 1, two patches ago is 2, etc
 # todo incorporate sub-patches using date ranges(?)
-patch_ago = 2
+patch_ago = 5
 url = 'https://www.datdota.com/heroes/performances?patch=7.28&after=01%2F01%2F2011&before=' \
       '12%2F04%2F2021&duration=' \
       '0%3B200&duration-value-from=0&duration-value-to=200&tier=2&valve-event=does-not-matter&threshold=1'
@@ -41,17 +45,19 @@ soup = bs4.BeautifulSoup(example_file.text, 'html.parser')
 # variables for algorithm
 ban_list = ['1stphasepicks', '2ndphasepicks', '3rdphasepicks', '1stphasebans', '2ndphasebans', '3rdphasebans']
 
+
 # weighted ave and stdev function
 def weighted_ave_and_std(values, weights):
-    '''
+    """
     Return the weighted average and standard deviation.
 
     values, weights -- Numpy ndarrays with the same shape
-    '''
+    """
     average = np.average(values, weights=weights)
     # Fast and numerically precise
-    variance = np.average((values-average)**2, weights=weights)
-    return (average, math.sqrt(variance))
+    variance = np.average((values - average) ** 2, weights=weights)
+    return average, math.sqrt(variance)
+
 
 def hero_cleanup(hero_df, total_games):
     # drop all columns with data based on other columns
@@ -60,20 +66,19 @@ def hero_cleanup(hero_df, total_games):
 
     # columns that should be normalized to number of games
     columns_to_game_normalize = ['wins', 'losses', 'asradiant', 'asdire'] + ban_list
-    for i in columns_to_game_normalize:
-        hero_df[i] = hero_df[i] / total_games
+    for j in columns_to_game_normalize:
+        hero_df[j] = hero_df[j] / total_games
     return hero_df
 
 
-def patch_grabber(patch_ago, min_games, soup):
+def patch_grabber(patch_ago, soup):
     # grab url for professional DOTA matches
     patch = soup.select(f'#patch > option:nth-child({patch_ago})')
     patch = patch[0].getText()
 
     url_hero_stats = (f'https://www.datdota.com/heroes/performances?patch={patch}&after=01%2F01%2F2011&before='
-                      '12%2F04%2F2021&duration='
-                      '0%3B200&duration-value-from=0&duration-value-to=200&tier=2&valve-event=does-not-matter'
-                      '&threshold=1')
+                      f'28%2F04%2F2021&duration=0%3B200&duration-value-from=0&duration-value-to=200'
+                      f'&tier=1&tier=2&tier=3&valve-event=does-not-matter&threshold=1')
 
     # use requests and bs to read the webpage as html txt file
     example_file = requests.get(url_hero_stats)
@@ -83,7 +88,7 @@ def patch_grabber(patch_ago, min_games, soup):
     # patch version to investigate
     patch = soup.select(f'#patch > option:nth-child({patch_ago})')
     patch = patch[0].getText()
-    print(f'Current patch is {patch}')
+    print(f'Patch is {patch}')
 
     # locate the table with relevant information on heros during the patch in question
     hero_table = soup.find('table', class_='table table-striped table-bordered table-hover data-table')
@@ -134,9 +139,9 @@ def patch_grabber(patch_ago, min_games, soup):
     # %%
     # Now we need to assemble information on picks and bans
     url_bans = (
-        'https://www.datdota.com/drafts?faction=both&first-pick=either&tier=2&valve-event=does-not-matter&patch='
-        f'{patch}&after=01%2F01%2F2011&before=12%2F04%2F2021&duration=0%3B200&duration-value-from='
-        '0&duration-value-to=200')
+        'https://www.datdota.com/drafts?faction=both&first-pick=either&tier=1&tier=2&tier=3'
+        f'&valve-event=does-not-matter&patch={patch}&after=01%2F01%2F2011&before=28%2F04%2F2021&duration=0%3B200'
+        '&duration-value-from=0&duration-value-to=200')
 
     # use requests and bs to read the webpage as html txt file
     ban_file = requests.get(url_bans)
@@ -212,60 +217,64 @@ def patch_grabber(patch_ago, min_games, soup):
 
 
 # %%
-
-hero_df, total_games = patch_grabber(patch_ago, min_games, soup)
-
-hero_df.to_csv('herodf.csv')
-
-# %%
 '''
-The best way to tell if a hero was nerfed or buffed is to compare the win rate of the hero from the previous patch
-to the current patch. We can use this methodology for all patches up to the most recent.
-There is an issue in that all patches have sub-patches, such as patch 7.28 had 7.28a 7.28b and 7.28c. This will 
-need to be clarified in future versions.
-This methodology supposes that IF a nerf/buff happens, humans will be affected. I imagine that some buffs will go
-unnoticed, as will some nerfs, but this method should be the most data driven. Instances like Ana's use of Io
-that changed the meta in the final stages of a tournament, will likely be much harder to detect.
-Also, it is possible for a hero to be buffed, but others around it are MORE buffed. I would treat this as a nerf, as
-other heroes are stronger as a result of the patch. Relative performance is key.
-Finally, there will be variance in every patch for hero winrate. If we want to determine whether a hero is buffed or
-nerfed, we need to account for variance in hero performance. Arguably, the more games the hero has been played, the
-more accurate that winrate is likely to be. Thus, instead of comparing the winrate of each hero to the average winrate
-over that patch, we want to look at the normalized average and stdev. Conversely, we could also examine winrate
-variance over previous patches for each individual hero, but this introduces massive uncertainty as each patch can
-change hero mechanics.
+Scan over all patches up to patch_ago to capture more data.
 '''
-# previous patch version
-previous_hero_df, previous_total_games = patch_grabber(patch_ago + 1, min_games, soup)
+hero_all_selected_patches = pd.DataFrame()
+for i in range(1, patch_ago):
+    hero_df, total_games = patch_grabber(i, soup)
 
-# previous_hero_df = hero_cleanup(previous_hero_df, previous_total_games)
+    # %%
+    '''
+    The best way to tell if a hero was nerfed or buffed is to compare the win rate of the hero from the previous patch
+    to the current patch. We can use this methodology for all patches up to the most recent.
+    There is an issue in that all patches have sub-patches, such as patch 7.28 had 7.28a 7.28b and 7.28c. This will 
+    need to be clarified in future versions.
+    This methodology supposes that IF a nerf/buff happens, humans will be affected. I imagine that some buffs will go
+    unnoticed, as will some nerfs, but this method should be the most data driven. Instances like Ana's use of Io
+    that changed the meta in the final stages of a tournament, will likely be much harder to detect.
+    Also, it is possible for a hero to be buffed, but others around it are MORE buffed. I would treat this as a nerf, as
+    other heroes are stronger as a result of the patch. Relative performance is key.
+    Finally, there will be variance in every patch for hero winrate. If we want to determine whether a hero is buffed or
+    nerfed, we need to account for variance in hero performance. Arguably, the more games the hero has been played, the
+    more accurate that winrate is likely to be. Thus, instead of comparing the winrate of each hero to the average 
+    winrate over that patch, we want to look at the normalized average and stdev. Conversely, we could also examine 
+    winrate variance over previous patches for each individual hero, but this introduces massive uncertainty as each 
+    patch can change hero mechanics.
+    '''
+    # previous patch version
+    previous_hero_df, previous_total_games = patch_grabber(i + 1, soup)
 
-previous_hero_df.to_csv('previousherodf.csv')
+    # previous_hero_df = hero_cleanup(previous_hero_df, previous_total_games)
 
-# todo previous_hero_df limited by min_games in its dataset, or hero_df dataset?
-winrate_compare = (hero_df['winrate'][hero_df['totalcount'] >= min_games] -
-                   previous_hero_df['winrate'][previous_hero_df['totalcount'] >= min_games]).dropna()
-winrate_compare.to_csv('winratecompare.csv')
-winrate_ave = winrate_compare.mean()
-winrate_std = winrate_compare.std()
-# print(np.array(winrate_compare))
-# print(np.array(hero_df['totalcount'][hero_df['totalcount'] >= min_games]))
-winrate_weighted_ave, winrate_weighted_std = (
-    weighted_ave_and_std(np.array(winrate_compare),
-                         np.array(hero_df['totalcount'][hero_df['totalcount'] >= min_games]))
-)
-winrate_high = winrate_weighted_ave + winrate_weighted_std*buff_adjuster
-winrate_low = winrate_weighted_ave - winrate_weighted_std
-buff_classifier = np.where(winrate_compare > winrate_high, 1, 0)
-buff_classifier = pd.Series(buff_classifier, index=winrate_compare.index)
-nerf_classifier = np.where(winrate_compare < winrate_low, 1, 0)
-nerf_classifier = pd.Series(nerf_classifier, index=winrate_compare.index)
+    # todo previous_hero_df limited by min_games in its dataset, or hero_df dataset?
+    winrate_compare = (hero_df['winrate'][hero_df['totalcount'] >= min_games] -
+                       previous_hero_df['winrate'][previous_hero_df['totalcount'] >= min_games]).dropna()
 
-hero_df['winrate_compare'] = winrate_compare
-hero_df['buffed'] = buff_classifier
-hero_df['nerfed'] = nerf_classifier
+    previous_hero_df_min_games = previous_hero_df[previous_hero_df['totalcount'] >= min_games]
+    hero_df_min_games = hero_df[hero_df['totalcount'] >= min_games]
 
-hero_df.to_csv('herodf.csv')
+    # remove any hero not present in both patches
+    hero_difference = hero_df_min_games.index.difference(previous_hero_df_min_games.index)
+    hero_df_min_games = hero_df_min_games.drop(index=hero_difference)
+
+    winrate_weighted_ave, winrate_weighted_std = (
+        weighted_ave_and_std(np.array(winrate_compare),
+                             np.array(hero_df_min_games['totalcount']))
+    )
+    winrate_high = winrate_weighted_ave + winrate_weighted_std * buff_adjuster
+    winrate_low = winrate_weighted_ave - winrate_weighted_std
+    buff_classifier = np.where(winrate_compare > winrate_high, 1, 0)
+    buff_classifier = pd.Series(buff_classifier, index=winrate_compare.index)
+    nerf_classifier = np.where(winrate_compare < winrate_low, 1, 0)
+    nerf_classifier = pd.Series(nerf_classifier, index=winrate_compare.index)
+
+    hero_df['winrate_compare'] = winrate_compare
+    hero_df['buffed'] = buff_classifier
+    hero_df['nerfed'] = nerf_classifier
+
+    hero_all_selected_patches = pd.concat([hero_all_selected_patches, hero_df])
+hero_all_selected_patches.to_csv(f'heroallpatchesTEST.csv')
 
 # %%
 '''
@@ -273,89 +282,126 @@ At this point, it is essential to separate the data so that our data is scaled o
 the training set, rather than all data contained in the train, test, and validation splits.
 '''
 # eliminate all heroes that aren't classified, or have null values
-hero_df = hero_df.dropna()
+hero_all_selected_patches = hero_all_selected_patches.dropna()
 
 # separate the data
-X = hero_df.iloc[:,:-3]
-y = hero_df['buffed']
+X = hero_all_selected_patches.iloc[:, :-3]
+y = hero_all_selected_patches['buffed']
 
 # do not touch X_val and y_val until you feel EXTREMELY CONFIDENT about your model
-X_traintest, X_val, y_traintest, y_val = train_test_split(X, y, test_size=0.1, random_state=42, stratify=y)
+X_full_train, X_test, y_full_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42, stratify=y)
 
-X_train, X_test, y_train, y_test = train_test_split(X_traintest, y_traintest, stratify=y_traintest)
+X_train, X_val, y_train, y_val = train_test_split(X_full_train, y_full_train, stratify=y_full_train)
 
 # %%
 # train a simple nearest neighbors classifier
+if knn == 'yes':
+    # build a pipeline to standardize the input data and generate a model
+    # MinMaxScaler required as Chi2 only works for positive input values
+    pipe = Pipeline([('scaler', StandardScaler()),
+                     ('minmax', MinMaxScaler()),
+                     ('reduce_dim', SelectKBest(chi2)),
+                     ('kNNClassifier', KNeighborsClassifier())])
 
-# build a pipeline to standardize the input data and generate a model
-# MinMaxScaler required as Chi2 only works for positive input values
-pipe = Pipeline([('scaler', StandardScaler()),
-                 ('minmax', MinMaxScaler()),
-                 ('reduce_dim', SelectKBest(chi2)),
-                 ('kNNClassifier', KNeighborsClassifier())])
+    # reduce_dim__k removes all but the highest scoring k features
+    param_grid = {
+        'reduce_dim__k': np.arange(1, 15, 1),
+        'kNNClassifier__n_neighbors': np.arange(2, 11, 1),
+    }
 
-# reduce_dim__k removes all but the highest scoring k features
-param_grid = {
-    'reduce_dim__k' : np.arange(1,15,1),
-    'kNNClassifier__n_neighbors' : np.arange(2,11,1),
-}
+    CV = GridSearchCV(pipe, param_grid, n_jobs=1, return_train_score=True, scoring='f1')
 
-CV = GridSearchCV(pipe, param_grid, n_jobs=1, return_train_score=True, scoring='f1')
+    CV.fit(X_train, y_train)
 
-CV.fit(X_train, y_train)
+    cv_results = pd.DataFrame(CV.cv_results_)
+    cv_results.to_csv(f'CV_kNN_results.csv')
 
-cv_results = pd.DataFrame(CV.cv_results_)
-cv_results.to_csv(f'CV_kNN_results.csv')
+    fig, ax = plt.subplots(1, 1, figsize=(12, 9))
+    ax = sns.lineplot(data=cv_results, x='param_kNNClassifier__n_neighbors',
+                      y='mean_test_score', hue='param_reduce_dim__k')
+    ax.set_title('5-fold CV performance for kNN Classifier')
+    ax.set_xlabel(f'k Nieghbors')
+    ax.legend(loc='upper right')
+    plt.savefig(f'kNN_Buff_score.png')
+    plt.clf()
 
-fig, ax = plt.subplots(1, 1, figsize=(12,9))
-ax = sns.lineplot(data=cv_results, x='param_kNNClassifier__n_neighbors',
-                     y='mean_test_score', hue='param_reduce_dim__k')
-ax.set_title('5-fold CV performance for kNN Classifier')
-ax.set_xlabel(f'k Nieghbors')
-ax.legend(loc='upper right')
-plt.savefig(f'kNN_Buff_score.png')
-plt.clf()
-
-report = classification_report(y_test, CV.predict(X_test), target_names=['not_buffed', 'buffed'], output_dict=True)
-pd.DataFrame(report).T.to_csv('kNN_classification_report.csv')
-print('Done with kNN')
+    report = classification_report(y_val, CV.predict(X_val), target_names=['not_buffed', 'buffed'], output_dict=True)
+    pd.DataFrame(report).T.to_csv('kNN_classification_report.csv')
+    print('Done with kNN')
 
 # %%
 # train a SVC
+if svc == 'yes':
+    # build a pipeline to standardize the input data and generate a model
+    # MinMaxScaler required as Chi2 only works for positive input values
+    pipe = Pipeline([('scaler', StandardScaler()),
+                     ('minmax', MinMaxScaler()),
+                     ('reduce_dim', SelectKBest(chi2)),
+                     ('classifier', NuSVC())])
 
-# build a pipeline to standardize the input data and generate a model
-# MinMaxScaler required as Chi2 only works for positive input values
-pipe = Pipeline([('scaler', StandardScaler()),
-                 ('minmax', MinMaxScaler()),
-                 ('reduce_dim', SelectKBest(chi2)),
-                 ('classifier', NuSVC())])
-
-param_grid = {
-    'reduce_dim__k' : np.arange(1,15,1),
-    'classifier__nu': np.linspace(0.01,1,11).tolist(),
+    param_grid = {
+        'reduce_dim__k': np.arange(1, 15, 1),
+        'classifier__nu': np.linspace(0.01, 1, 11).tolist(),
     }  # 'classifier__kernel': ['linear', 'rbf']
 
-CV = GridSearchCV(pipe, param_grid, n_jobs=1, return_train_score=True, scoring='f1')
+    CV = GridSearchCV(pipe, param_grid, n_jobs=1, return_train_score=True, scoring='f1')
 
-CV.fit(X_train, y_train)
+    CV.fit(X_train, y_train)
 
-cv_results = pd.DataFrame(CV.cv_results_)
-cv_results.to_csv(f'CV_NuSVC_results.csv')
+    cv_results = pd.DataFrame(CV.cv_results_)
+    cv_results.to_csv(f'CV_NuSVC_results.csv')
 
-fig, ax = plt.subplots(1, 1, figsize=(12,9))
-ax = sns.lineplot(data=cv_results, x='param_classifier__nu',
-                     y='mean_test_score', hue='param_reduce_dim__k')
-ax.set_title('5-fold CV performance for NuSVC')
-ax.set_xlabel(f'\u03BD for \u03BD-SVC')
-ax.legend(loc='upper right')
-plt.savefig(f'NuSVC_buff.png')
-plt.clf()
+    fig, ax = plt.subplots(1, 1, figsize=(12, 9))
+    ax = sns.lineplot(data=cv_results, x='param_classifier__nu',
+                      y='mean_test_score', hue='param_reduce_dim__k')
+    ax.set_title('5-fold CV performance for NuSVC')
+    ax.set_xlabel(f'\u03BD for \u03BD-SVC')
+    ax.legend(loc='upper right')
+    plt.savefig(f'NuSVC_buff.png')
+    plt.clf()
 
-report = classification_report(y_test, CV.predict(X_test), target_names=['not_buffed', 'buffed'], output_dict=True)
-pd.DataFrame(report).T.to_csv('NuSVC_classification_report.csv')
-print('done with SVC')
+    report = classification_report(y_val, CV.predict(X_val), target_names=['not_buffed', 'buffed'], output_dict=True)
+    pd.DataFrame(report).T.to_csv('NuSVC_classification_report.csv')
+    print('done with SVC')
 
 # %%
+# train a neural network
+if ann == 'yes':
+    '''
+    Can change number of hidden layers, neurons per layer, learning rate, 
+    number of input layers, architecture of layers, activation function, 
+    weight initialization logic, etc
+    '''
+
+
+    def build_classifier_model(n_hidden=2, n_neurons=50, learning_rate=3e-3, input_shape=[26]):
+        model = keras.models.Sequential()
+        model.add(keras.layers.InputLayer(input_shape=input_shape))
+        for layer in range(n_hidden):
+            model.add(keras.layers.Dense(n_neurons, activation='relu'))
+        model.add(keras.layers.Dense(1, activation='sigmoid'))
+        optimizer = keras.optimizers.SGD(learning_rate=learning_rate)
+        model.compile(loss='binary_crossentropy',
+                      optimizer=optimizer,
+                      metrics=['accuracy'])
+        return model
+
+
+    # build a regressor model using build_model
+    model = build_classifier_model()
+
+    history = model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val),
+                            callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)])
+
+    # plot the results
+    pd.DataFrame(history.history).plot(figsize=(8, 5))
+    plt.grid(True)
+    plt.gca().set_ylim(0, 1)  # set the vertical range between 0,1
+    plt.savefig(f'Sequential_Neural_Net.png')
+    print('done with Neural Network')
+
+# %%
+
 # train a RFC
 '''
 Current model has information leaking somehow. Training sets are all scoring perfectly, some unique info
