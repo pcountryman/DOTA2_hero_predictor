@@ -1,6 +1,9 @@
 """
 Currently only looking at all semi-pro and above games, treating all sub-patches as identical
 """
+
+# todo revisit buff/nerf assumptions. try and predict buff and nerf
+
 import requests
 import bs4
 import string
@@ -29,11 +32,12 @@ ann = 'yes'
 min_games = 10
 
 # todo temporary buff adjuster
-buff_adjuster = 2
+buff_adjuster = 1
+nerf_adjuster = 1
 
 # create variable to investigate patches, where most recent patch is 1, two patches ago is 2, etc
 # todo incorporate sub-patches using date ranges(?)
-patch_ago = 5
+patch_ago = 7
 url = 'https://www.datdota.com/heroes/performances?patch=7.28&after=01%2F01%2F2011&before=' \
       '12%2F04%2F2021&duration=' \
       '0%3B200&duration-value-from=0&duration-value-to=200&tier=2&valve-event=does-not-matter&threshold=1'
@@ -221,13 +225,13 @@ def patch_grabber(patch_ago, soup):
 Scan over all patches up to patch_ago to capture more data.
 '''
 hero_all_selected_patches = pd.DataFrame()
-for i in range(1, patch_ago):
+for i in range(2, patch_ago+1):
     hero_df, total_games = patch_grabber(i, soup)
 
     # %%
     '''
-    The best way to tell if a hero was nerfed or buffed is to compare the win rate of the hero from the previous patch
-    to the current patch. We can use this methodology for all patches up to the most recent.
+    The best way to tell if a hero WILL BE nerfed or buffed is to compare the win rate of the hero from the current 
+    patch to the following patch. We can use this methodology for all patches up to the most recent.
     There is an issue in that all patches have sub-patches, such as patch 7.28 had 7.28a 7.28b and 7.28c. This will 
     need to be clarified in future versions.
     This methodology supposes that IF a nerf/buff happens, humans will be affected. I imagine that some buffs will go
@@ -242,16 +246,14 @@ for i in range(1, patch_ago):
     winrate variance over previous patches for each individual hero, but this introduces massive uncertainty as each 
     patch can change hero mechanics.
     '''
-    # previous patch version
-    previous_hero_df, previous_total_games = patch_grabber(i + 1, soup)
+    # following patch version
+    following_hero_df, following_total_games = patch_grabber(i - 1, soup)
 
-    # previous_hero_df = hero_cleanup(previous_hero_df, previous_total_games)
-
-    # todo previous_hero_df limited by min_games in its dataset, or hero_df dataset?
+    # todo following_hero_df limited by min_games in its dataset, or hero_df dataset?
     winrate_compare = (hero_df['winrate'][hero_df['totalcount'] >= min_games] -
-                       previous_hero_df['winrate'][previous_hero_df['totalcount'] >= min_games]).dropna()
+                       following_hero_df['winrate'][following_hero_df['totalcount'] >= min_games]).dropna()
 
-    previous_hero_df_min_games = previous_hero_df[previous_hero_df['totalcount'] >= min_games]
+    previous_hero_df_min_games = following_hero_df[following_hero_df['totalcount'] >= min_games]
     hero_df_min_games = hero_df[hero_df['totalcount'] >= min_games]
 
     # remove any hero not present in both patches
@@ -263,7 +265,7 @@ for i in range(1, patch_ago):
                              np.array(hero_df_min_games['totalcount']))
     )
     winrate_high = winrate_weighted_ave + winrate_weighted_std * buff_adjuster
-    winrate_low = winrate_weighted_ave - winrate_weighted_std
+    winrate_low = winrate_weighted_ave - winrate_weighted_std * nerf_adjuster
     buff_classifier = np.where(winrate_compare > winrate_high, 1, 0)
     buff_classifier = pd.Series(buff_classifier, index=winrate_compare.index)
     nerf_classifier = np.where(winrate_compare < winrate_low, 1, 0)
@@ -286,7 +288,7 @@ hero_all_selected_patches = hero_all_selected_patches.dropna()
 
 # separate the data
 X = hero_all_selected_patches.iloc[:, :-3]
-y = hero_all_selected_patches['buffed']
+y = hero_all_selected_patches[['buffed', 'nerfed']]
 
 # do not touch X_val and y_val until you feel EXTREMELY CONFIDENT about your model
 X_full_train, X_test, y_full_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42, stratify=y)
@@ -365,6 +367,9 @@ if svc == 'yes':
     print('done with SVC')
 
 # %%
+
+# todo add in CV
+
 # train a neural network
 if ann == 'yes':
     '''
@@ -379,7 +384,7 @@ if ann == 'yes':
         model.add(keras.layers.InputLayer(input_shape=input_shape))
         for layer in range(n_hidden):
             model.add(keras.layers.Dense(n_neurons, activation='relu'))
-        model.add(keras.layers.Dense(1, activation='sigmoid'))
+        model.add(keras.layers.Dense(2, activation='sigmoid'))
         optimizer = keras.optimizers.SGD(learning_rate=learning_rate)
         model.compile(loss='binary_crossentropy',
                       optimizer=optimizer,
