@@ -24,12 +24,15 @@ import tensorflow as tf
 from tensorflow import keras
 
 # which models to attempt to fit
-knn = 'no'
-svc = 'no'
+knn = 'no'  # todo change to MLkNN or replace
+svc = 'no'  # todo change to multilabel NuSVC or replace
 ann = 'yes'
 
 # minimum number of games to count
 min_games = 10
+
+# number of subpatches to analyze
+patch_ago = 10
 
 # todo temporary buff adjuster
 buff_adjuster = 1
@@ -37,14 +40,62 @@ nerf_adjuster = 1
 
 # create variable to investigate patches, where most recent patch is 1, two patches ago is 2, etc
 # todo incorporate sub-patches using date ranges(?)
-patch_ago = 7
-url = 'https://www.datdota.com/heroes/performances?patch=7.28&after=01%2F01%2F2011&before=' \
-      '12%2F04%2F2021&duration=' \
-      '0%3B200&duration-value-from=0&duration-value-to=200&tier=2&valve-event=does-not-matter&threshold=1'
-# use requests and bs to read the webpage as html txt file
-example_file = requests.get(url)
-print(example_file.raise_for_status())
-soup = bs4.BeautifulSoup(example_file.text, 'html.parser')
+patch_url = 'https://dota2.fandom.com/wiki/Game_Versions'
+patch_file = requests.get(patch_url)
+print(f'{patch_file.raise_for_status()} errors pulling patch versions')
+patch_soup = bs4.BeautifulSoup(patch_file.text, 'html.parser')
+# locate the table with relevant information on heros during the patch in question
+patch_table = patch_soup.find('table', class_='wikitable')
+# empty list to store column titles in
+patch_table_columns = []
+
+# import a string of punctuation and whitespace to be removed from strings
+exclist = string.punctuation + string.whitespace
+# go through each column title in the table and write it to dota_columns
+for title in patch_table.find_all('th', class_='header'):
+    column_title = title.text.strip()
+    column_title = column_title.lower()
+
+    # remove punctuation and whitespace from column_title
+    column_title = column_title.translate(str.maketrans('', '', exclist))
+    patch_table_columns.append(column_title)
+patch_table_columns.pop(1)  # todo remove once highlights have been extracted
+
+# empty dictionary to store all patches, their hero buff/nerfs, and their initialization dates
+patch_dict = {}
+
+# go through each row in the patch_table and write all stats to a dictionary. keys=patch, values=dates and heroes
+for body in patch_table.find_all('tbody'):
+    # todo fix once first row is fixed on website
+    rows = body.find_all('tr')[2:]  # exclude first row as it is a header row
+    for row in rows:
+        patch_number = row.find('td').text.strip()
+        # todo extract extract highlights
+        patch_date = row.find_all('td')[2].text.strip()
+        patch_number = patch_number.translate(str.maketrans('', '', exclist))
+        patch_dict[patch_number] = patch_date
+
+# todo change to dataframe once highlights are included
+# transform dictionary into a pandas series
+patch_df = pd.Series(patch_dict, name='patch')
+# convert into datetime info
+patch_datetime = pd.Series(pd.to_datetime(patch_df, format='%Y/%m/%d'), name='datetime')
+patch_year = patch_datetime.dt.year.rename('year')
+patch_month = patch_datetime.dt.month.rename('month')
+patch_day = patch_datetime.dt.day.rename('day')
+patch_time = pd.concat([patch_year, patch_month, patch_day], axis=1)
+
+# url = 'https://www.datdota.com/heroes/performances?patch=7.29&patch=7.28&patch=7.27&patch=7.26&patch=7.25' \
+#       '&patch=7.24&patch=7.23&patch=7.22&patch=7.21&patch=7.20&patch=7.19&patch=7.18&patch=7.17&patch=7.16' \
+#       '&patch=7.15&patch=7.14&patch=7.13&patch=7.12&patch=7.11&patch=7.10&patch=7.09&patch=7.08&patch=7.07' \
+#       '&patch=7.06&patch=7.05&patch=7.04&patch=7.03&patch=7.02&patch=7.01&patch=7.00' \
+#       '&after=10%2F01%2F2021&before=19%2F02%2F2021&duration=0%3B200&duration-value-from=0' \
+#       '&duration-value-to=200&tier=1&tier=2&tier=3&valve-event=does-not-matter&threshold=1'
+#
+# # use requests and bs to read the webpage as html txt file
+# example_file = requests.get(url)
+# print(example_file.raise_for_status())
+# soup = bs4.BeautifulSoup(example_file.text, 'html.parser')
 
 # variables for algorithm
 ban_list = ['1stphasepicks', '2ndphasepicks', '3rdphasepicks', '1stphasebans', '2ndphasebans', '3rdphasebans']
@@ -75,30 +126,28 @@ def hero_cleanup(hero_df, total_games):
     return hero_df
 
 
-def patch_grabber(patch_ago, soup):
-    # grab url for professional DOTA matches
-    patch = soup.select(f'#patch > option:nth-child({patch_ago})')
-    patch = patch[0].getText()
-
-    url_hero_stats = (f'https://www.datdota.com/heroes/performances?patch={patch}&after=01%2F01%2F2011&before='
-                      f'28%2F04%2F2021&duration=0%3B200&duration-value-from=0&duration-value-to=200'
-                      f'&tier=1&tier=2&tier=3&valve-event=does-not-matter&threshold=1')
+def patch_grabber(now_year, now_month, now_day, next_year, next_month, next_day):
+    url_hero_stats = (f'https://www.datdota.com/heroes/performances?patch=7.29&patch=7.28&patch=7.27&patch=7.26'
+                      f'&patch=7.25&patch=7.24&patch=7.23&patch=7.22&patch=7.21&patch=7.20&patch=7.19&patch=7.18'
+                      f'&patch=7.17&patch=7.16&patch=7.15&patch=7.14&patch=7.13&patch=7.12&patch=7.11&patch=7.10'
+                      f'&patch=7.09&patch=7.08&patch=7.07&patch=7.06&patch=7.05&patch=7.04&patch=7.03&patch=7.02'
+                      f'&patch=7.01&patch=7.00&after={now_day}%2F{now_month}%2F{now_year}'
+                      f'&before={next_day}%2F{next_month}%2F{next_year}&duration=0%3B200'
+                      f'&duration-value-from=0&duration-value-to=200&tier=1&tier=2&tier=3'
+                      f'&valve-event=does-not-matter&threshold=1')
 
     # use requests and bs to read the webpage as html txt file
     example_file = requests.get(url_hero_stats)
-    print(example_file.raise_for_status())
+    # print(example_file.raise_for_status())
     soup = bs4.BeautifulSoup(example_file.text, 'html.parser')
-
-    # patch version to investigate
-    patch = soup.select(f'#patch > option:nth-child({patch_ago})')
-    patch = patch[0].getText()
-    print(f'Patch is {patch}')
 
     # locate the table with relevant information on heros during the patch in question
     hero_table = soup.find('table', class_='table table-striped table-bordered table-hover data-table')
 
     # import a string of punctuation and whitespace to be removed from strings
     exclist = string.punctuation + string.whitespace
+    punc_no_period = '!"#$%&\'()*+,-/:;<=>?@[\\]^_`{|}~' + string.whitespace
+    table = str.maketrans(dict.fromkeys(punc_no_period))
     # empty list to store column titles in
     dota_columns = []
 
@@ -126,7 +175,10 @@ def patch_grabber(patch_ago, soup):
             for i in range(1, len(row.find_all('td'))):
                 dota_stat = row.find_all('td')[i].text.strip()
                 dota_stat = dota_stat.rstrip('%')
-                dota_row.append(dota_stat)
+                clean_dota_stat = dota_stat.translate(table)
+                if clean_dota_stat == '':
+                    clean_dota_stat = None
+                dota_row.append(clean_dota_stat)
             hero_name = row.find('td').text.strip()
             hero_name = hero_name.translate(str.maketrans('', '', exclist))
             hero_dict[hero_name] = dota_row
@@ -142,14 +194,19 @@ def patch_grabber(patch_ago, soup):
 
     # %%
     # Now we need to assemble information on picks and bans
-    url_bans = (
-        'https://www.datdota.com/drafts?faction=both&first-pick=either&tier=1&tier=2&tier=3'
-        f'&valve-event=does-not-matter&patch={patch}&after=01%2F01%2F2011&before=28%2F04%2F2021&duration=0%3B200'
-        '&duration-value-from=0&duration-value-to=200')
+
+    url_bans = ('https://www.datdota.com/drafts?faction=both&first-pick=either&tier=1&tier=2&tier=3'
+                '&valve-event=does-not-matter&patch=7.29&patch=7.28&patch=7.27&patch=7.26&patch=7.25'
+                '&patch=7.24&patch=7.23&patch=7.22&patch=7.21&patch=7.20&patch=7.19&patch=7.18&patch=7.17'
+                '&patch=7.16&patch=7.15&patch=7.14&patch=7.13&patch=7.12&patch=7.11&patch=7.10&patch=7.09'
+                '&patch=7.08&patch=7.07&patch=7.06&patch=7.05&patch=7.04&patch=7.03&patch=7.02&patch=7.01'
+                f'&patch=7.00&after={now_day}%2F{now_month}%2F{now_year}'
+                f'&before={next_day}%2F{next_month}%2F{next_year}&duration=0%3B200&duration-value-from=0'
+                f'&duration-value-to=200')
 
     # use requests and bs to read the webpage as html txt file
     ban_file = requests.get(url_bans)
-    print(ban_file.raise_for_status())
+    # print(ban_file.raise_for_status())
     ban_soup = bs4.BeautifulSoup(ban_file.text, 'html.parser')
 
     # grab the number of total games
@@ -159,7 +216,7 @@ def patch_grabber(patch_ago, soup):
     # create a list to eliminate letters and empty space
     exc_alpha = string.ascii_letters + string.whitespace + string.punctuation
     total_games = int(total_games.translate(str.maketrans('', '', exc_alpha)))
-    print(f'Total number of games: {total_games}')
+    # print(f'Total number of games: {total_games}')
 
     # locate the table with relevant information on heros during the patch in question
     ban_table = ban_soup.find('table', class_='table table-striped table-bordered table-hover data-table')
@@ -196,7 +253,10 @@ def patch_grabber(patch_ago, soup):
             dota_row = []
             for i in range(1, len(row.find_all('td'))):
                 dota_stat = row.find_all('td')[i].text.strip()
-                dota_row.append(dota_stat)
+                clean_dota_stat = dota_stat.translate(table)
+                if clean_dota_stat == '':
+                    clean_dota_stat = None
+                dota_row.append(clean_dota_stat)
             hero_name = row.find('td').text.strip()
             hero_name = hero_name.translate(str.maketrans('', '', exclist))
             ban_dict[hero_name] = dota_row
@@ -214,7 +274,9 @@ def patch_grabber(patch_ago, soup):
     for i in ban_list:
         hero_df[i] = ban_df[i]
 
-    # transform the data into float
+    # transform the data into float and remove rows with empty data entries
+    # hero_df.to_csv(f'herodfTEST.csv')
+    hero_df = hero_df.dropna(axis=0)
     hero_df = hero_df.astype('float')
 
     return hero_df, total_games
@@ -224,9 +286,25 @@ def patch_grabber(patch_ago, soup):
 '''
 Scan over all patches up to patch_ago to capture more data.
 '''
+
+
+# create definition to fetch year, month, and date for a given patch
+def patch_date_producer(i, patch_time):
+    now_patch_year = patch_time['year'].iloc[i]
+    now_patch_month = patch_time['month'].iloc[i]
+    now_patch_day = patch_time['day'].iloc[i]
+    return now_patch_year, now_patch_month, now_patch_day
+
+
 hero_all_selected_patches = pd.DataFrame()
-for i in range(2, patch_ago+1):
-    hero_df, total_games = patch_grabber(i, soup)
+for i in range(2, patch_ago + 1):
+    # obtain year, month, day for all relevent patches
+    print(f'Current patch is {patch_time.index[i]}, Next patch is {patch_time.index[i - 1]}')
+    current_patch_year, current_patch_month, current_patch_day = patch_date_producer(i, patch_time)
+    next_patch_year, next_patch_month, next_patch_day = patch_date_producer(i - 1, patch_time)
+    next_next_patch_year, next_next_patch_month, next_next_patch_day = patch_date_producer(i - 2, patch_time)
+    hero_df, total_games = patch_grabber(current_patch_year, current_patch_month, current_patch_day,
+                                         next_patch_year, next_patch_month, next_patch_day)
 
     # %%
     '''
@@ -247,7 +325,9 @@ for i in range(2, patch_ago+1):
     patch can change hero mechanics.
     '''
     # following patch version
-    following_hero_df, following_total_games = patch_grabber(i - 1, soup)
+    following_hero_df, following_total_games = patch_grabber(next_patch_year, next_patch_month, next_patch_day,
+                                                             next_next_patch_year, next_next_patch_month,
+                                                             next_next_patch_day)
 
     # todo following_hero_df limited by min_games in its dataset, or hero_df dataset?
     winrate_compare = (hero_df['winrate'][hero_df['totalcount'] >= min_games] -
@@ -276,6 +356,7 @@ for i in range(2, patch_ago+1):
     hero_df['nerfed'] = nerf_classifier
 
     hero_all_selected_patches = pd.concat([hero_all_selected_patches, hero_df])
+
 hero_all_selected_patches.to_csv(f'heroallpatchesTEST.csv')
 
 # %%
@@ -379,7 +460,7 @@ if ann == 'yes':
     '''
 
 
-    def build_classifier_model(n_hidden=2, n_neurons=50, learning_rate=3e-3, input_shape=[26]):
+    def build_classifier_model(n_hidden=3, n_neurons=100, learning_rate=3e-3, input_shape=[26]):
         model = keras.models.Sequential()
         model.add(keras.layers.InputLayer(input_shape=input_shape))
         for layer in range(n_hidden):
@@ -396,7 +477,7 @@ if ann == 'yes':
     model = build_classifier_model()
 
     history = model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val),
-                            callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)])
+                        callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=20)])
 
     # plot the results
     pd.DataFrame(history.history).plot(figsize=(8, 5))
