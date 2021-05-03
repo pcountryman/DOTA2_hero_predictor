@@ -4,7 +4,7 @@ Currently only looking at all semi-pro and above games, treating all sub-patches
 
 import streamlit as st
 import requests
-import bs4
+from bs4 import BeautifulSoup
 import string
 import pandas as pd
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
@@ -41,7 +41,7 @@ nerf_adjuster = 1
 patch_url = 'https://dota2.fandom.com/wiki/Game_Versions'
 patch_file = requests.get(patch_url)
 print(f'{patch_file.raise_for_status()} errors pulling patch versions')
-patch_soup = bs4.BeautifulSoup(patch_file.text, 'html.parser')
+patch_soup = BeautifulSoup(patch_file.text, 'html.parser')
 # locate the table with relevant information on heros during the patch in question
 patch_table = patch_soup.find('table', class_='wikitable')
 # empty list to store column titles in
@@ -125,7 +125,7 @@ def patch_grabber(now_year, now_month, now_day, next_year, next_month, next_day)
     # use requests and bs to read the webpage as html txt file
     example_file = requests.get(url_hero_stats)
     # print(example_file.raise_for_status())
-    soup = bs4.BeautifulSoup(example_file.text, 'html.parser')
+    soup = BeautifulSoup(example_file.text, 'html.parser')
 
     # locate the table with relevant information on heros during the patch in question
     hero_table = soup.find('table', class_='table table-striped table-bordered table-hover data-table')
@@ -193,7 +193,7 @@ def patch_grabber(now_year, now_month, now_day, next_year, next_month, next_day)
     # use requests and bs to read the webpage as html txt file
     ban_file = requests.get(url_bans)
     # print(ban_file.raise_for_status())
-    ban_soup = bs4.BeautifulSoup(ban_file.text, 'html.parser')
+    ban_soup = BeautifulSoup(ban_file.text, 'html.parser')
 
     # grab the number of total games
     total_games_soup = ban_soup.select('#page-wrapper > div.row.border-bottom.white-bg.dashboard-header > div > '
