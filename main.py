@@ -2,8 +2,7 @@
 Currently only looking at all semi-pro and above games, treating all sub-patches as identical
 """
 
-# todo revisit buff/nerf assumptions. try and predict buff and nerf
-
+import streamlit as st
 import requests
 import bs4
 import string
@@ -32,14 +31,13 @@ ann = 'yes'
 min_games = 10
 
 # number of subpatches to analyze
-patch_ago = 10
+patch_ago = 15
 
 # todo temporary buff adjuster
 buff_adjuster = 1
 nerf_adjuster = 1
 
 # create variable to investigate patches, where most recent patch is 1, two patches ago is 2, etc
-# todo incorporate sub-patches using date ranges(?)
 patch_url = 'https://dota2.fandom.com/wiki/Game_Versions'
 patch_file = requests.get(patch_url)
 print(f'{patch_file.raise_for_status()} errors pulling patch versions')
@@ -70,7 +68,7 @@ for body in patch_table.find_all('tbody'):
     rows = body.find_all('tr')[2:]  # exclude first row as it is a header row
     for row in rows:
         patch_number = row.find('td').text.strip()
-        # todo extract extract highlights
+        # todo extract highlights based on a in li
         patch_date = row.find_all('td')[2].text.strip()
         patch_number = patch_number.translate(str.maketrans('', '', exclist))
         patch_dict[patch_number] = patch_date
@@ -84,18 +82,6 @@ patch_year = patch_datetime.dt.year.rename('year')
 patch_month = patch_datetime.dt.month.rename('month')
 patch_day = patch_datetime.dt.day.rename('day')
 patch_time = pd.concat([patch_year, patch_month, patch_day], axis=1)
-
-# url = 'https://www.datdota.com/heroes/performances?patch=7.29&patch=7.28&patch=7.27&patch=7.26&patch=7.25' \
-#       '&patch=7.24&patch=7.23&patch=7.22&patch=7.21&patch=7.20&patch=7.19&patch=7.18&patch=7.17&patch=7.16' \
-#       '&patch=7.15&patch=7.14&patch=7.13&patch=7.12&patch=7.11&patch=7.10&patch=7.09&patch=7.08&patch=7.07' \
-#       '&patch=7.06&patch=7.05&patch=7.04&patch=7.03&patch=7.02&patch=7.01&patch=7.00' \
-#       '&after=10%2F01%2F2021&before=19%2F02%2F2021&duration=0%3B200&duration-value-from=0' \
-#       '&duration-value-to=200&tier=1&tier=2&tier=3&valve-event=does-not-matter&threshold=1'
-#
-# # use requests and bs to read the webpage as html txt file
-# example_file = requests.get(url)
-# print(example_file.raise_for_status())
-# soup = bs4.BeautifulSoup(example_file.text, 'html.parser')
 
 # variables for algorithm
 ban_list = ['1stphasepicks', '2ndphasepicks', '3rdphasepicks', '1stphasebans', '2ndphasebans', '3rdphasebans']
@@ -299,7 +285,7 @@ def patch_date_producer(i, patch_time):
 hero_all_selected_patches = pd.DataFrame()
 for i in range(2, patch_ago + 1):
     # obtain year, month, day for all relevent patches
-    print(f'Current patch is {patch_time.index[i]}, Next patch is {patch_time.index[i - 1]}')
+    st.write(f'Current patch is {patch_time.index[i]}, Next patch is {patch_time.index[i - 1]}')
     current_patch_year, current_patch_month, current_patch_day = patch_date_producer(i, patch_time)
     next_patch_year, next_patch_month, next_patch_day = patch_date_producer(i - 1, patch_time)
     next_next_patch_year, next_next_patch_month, next_next_patch_day = patch_date_producer(i - 2, patch_time)
@@ -324,16 +310,16 @@ for i in range(2, patch_ago + 1):
     winrate variance over previous patches for each individual hero, but this introduces massive uncertainty as each 
     patch can change hero mechanics.
     '''
-    # following patch version
-    following_hero_df, following_total_games = patch_grabber(next_patch_year, next_patch_month, next_patch_day,
-                                                             next_next_patch_year, next_next_patch_month,
-                                                             next_next_patch_day)
+    # next patch version
+    next_hero_df, next_total_games = patch_grabber(next_patch_year, next_patch_month, next_patch_day,
+                                                   next_next_patch_year, next_next_patch_month,
+                                                   next_next_patch_day)
 
     # todo following_hero_df limited by min_games in its dataset, or hero_df dataset?
     winrate_compare = (hero_df['winrate'][hero_df['totalcount'] >= min_games] -
-                       following_hero_df['winrate'][following_hero_df['totalcount'] >= min_games]).dropna()
+                       next_hero_df['winrate'][next_hero_df['totalcount'] >= min_games]).dropna()
 
-    previous_hero_df_min_games = following_hero_df[following_hero_df['totalcount'] >= min_games]
+    previous_hero_df_min_games = next_hero_df[next_hero_df['totalcount'] >= min_games]
     hero_df_min_games = hero_df[hero_df['totalcount'] >= min_games]
 
     # remove any hero not present in both patches
@@ -450,6 +436,14 @@ if svc == 'yes':
 # %%
 
 # todo add in CV
+# todo output confidence percent for each prediction
+
+'''
+Consider how obvious it is for humans to tell if a hero will be buffed or nerfed. Reddit sentiment analysis
+all of the whiners, how accurate are they vs the experts.
+Patch note based analysis to predict hero winrate.
+Players over 6k MMR.
+'''
 
 # train a neural network
 if ann == 'yes':
@@ -473,16 +467,20 @@ if ann == 'yes':
         return model
 
 
-    # build a regressor model using build_model
+    # build a classifier model using build_model
     model = build_classifier_model()
 
     history = model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val),
                         callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=20)])
 
     # plot the results
+    # todo label axis, bro
     pd.DataFrame(history.history).plot(figsize=(8, 5))
     plt.grid(True)
     plt.gca().set_ylim(0, 1)  # set the vertical range between 0,1
+    plt.title('ANN predicts DOTA2 hero buffs and nerfs')
+    plt.ylabel('Accuracy')
+    plt.xlabel('epoch')
     plt.savefig(f'Sequential_Neural_Net.png')
     print('done with Neural Network')
 
