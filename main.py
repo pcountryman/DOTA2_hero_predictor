@@ -1,5 +1,22 @@
 """
-Currently only looking at all semi-pro and above games, treating all sub-patches as identical
+Currently only looking at all semi-pro and above games.
+"""
+"""
+The best way to tell if a hero WILL BE nerfed or buffed is to compare the win rate of the hero from the current 
+patch to the following patch. We can use this methodology for all patches up to the most recent.
+There is an issue in that all patches have sub-patches, such as patch 7.28 had 7.28a 7.28b and 7.28c. This will 
+need to be clarified in future versions.
+This methodology supposes that IF a nerf/buff happens, humans will be affected. I imagine that some buffs will go
+unnoticed, as will some nerfs, but this method should be the most data driven. Instances like Ana's use of Io
+that changed the meta in the final stages of a tournament, will likely be much harder to detect.
+Also, it is possible for a hero to be buffed, but others around it are MORE buffed. I would treat this as a nerf, as
+other heroes are stronger as a result of the patch. Relative performance is key.
+Finally, there will be variance in every patch for hero winrate. If we want to determine whether a hero is buffed or
+nerfed, we need to account for variance in hero performance. Arguably, the more games the hero has been played, the
+more accurate that winrate is likely to be. Thus, instead of comparing the winrate of each hero to the average 
+winrate over that patch, we want to look at the normalized average and stdev. Conversely, we could also examine 
+winrate variance over previous patches for each individual hero, but this introduces massive uncertainty as each 
+patch can change hero mechanics.
 """
 
 import streamlit as st
@@ -7,10 +24,11 @@ import requests
 from bs4 import BeautifulSoup
 import string
 import pandas as pd
+import random
 from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.pipeline import Pipeline
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectKBest, chi2
 from sklearn.svm import NuSVC
@@ -31,16 +49,12 @@ ann = 'yes'
 min_games = 10
 
 # number of subpatches to analyze
-patch_ago = 15
-
-# todo temporary buff adjuster
-buff_adjuster = 1
-nerf_adjuster = 1
+patch_ago = 20
 
 # create variable to investigate patches, where most recent patch is 1, two patches ago is 2, etc
 patch_url = 'https://dota2.fandom.com/wiki/Game_Versions'
 patch_file = requests.get(patch_url)
-print(f'{patch_file.raise_for_status()} errors pulling patch versions')
+# print(f'{patch_file.raise_for_status()} errors pulling patch versions')
 patch_soup = BeautifulSoup(patch_file.text, 'html.parser')
 # locate the table with relevant information on heros during the patch in question
 patch_table = patch_soup.find('table', class_='wikitable')
@@ -293,24 +307,6 @@ for i in range(2, patch_ago + 1):
                                          next_patch_year, next_patch_month, next_patch_day)
 
     # %%
-    '''
-    The best way to tell if a hero WILL BE nerfed or buffed is to compare the win rate of the hero from the current 
-    patch to the following patch. We can use this methodology for all patches up to the most recent.
-    There is an issue in that all patches have sub-patches, such as patch 7.28 had 7.28a 7.28b and 7.28c. This will 
-    need to be clarified in future versions.
-    This methodology supposes that IF a nerf/buff happens, humans will be affected. I imagine that some buffs will go
-    unnoticed, as will some nerfs, but this method should be the most data driven. Instances like Ana's use of Io
-    that changed the meta in the final stages of a tournament, will likely be much harder to detect.
-    Also, it is possible for a hero to be buffed, but others around it are MORE buffed. I would treat this as a nerf, as
-    other heroes are stronger as a result of the patch. Relative performance is key.
-    Finally, there will be variance in every patch for hero winrate. If we want to determine whether a hero is buffed or
-    nerfed, we need to account for variance in hero performance. Arguably, the more games the hero has been played, the
-    more accurate that winrate is likely to be. Thus, instead of comparing the winrate of each hero to the average 
-    winrate over that patch, we want to look at the normalized average and stdev. Conversely, we could also examine 
-    winrate variance over previous patches for each individual hero, but this introduces massive uncertainty as each 
-    patch can change hero mechanics.
-    '''
-    # next patch version
     next_hero_df, next_total_games = patch_grabber(next_patch_year, next_patch_month, next_patch_day,
                                                    next_next_patch_year, next_next_patch_month,
                                                    next_next_patch_day)
@@ -326,41 +322,45 @@ for i in range(2, patch_ago + 1):
     hero_difference = hero_df_min_games.index.difference(previous_hero_df_min_games.index)
     hero_df_min_games = hero_df_min_games.drop(index=hero_difference)
 
-    winrate_weighted_ave, winrate_weighted_std = (
-        weighted_ave_and_std(np.array(winrate_compare),
-                             np.array(hero_df_min_games['totalcount']))
-    )
-    winrate_high = winrate_weighted_ave + winrate_weighted_std * buff_adjuster
-    winrate_low = winrate_weighted_ave - winrate_weighted_std * nerf_adjuster
-    buff_classifier = np.where(winrate_compare > winrate_high, 1, 0)
-    buff_classifier = pd.Series(buff_classifier, index=winrate_compare.index)
-    nerf_classifier = np.where(winrate_compare < winrate_low, 1, 0)
-    nerf_classifier = pd.Series(nerf_classifier, index=winrate_compare.index)
+    # winrate_weighted_ave, winrate_weighted_std = (
+    #     weighted_ave_and_std(np.array(winrate_compare),
+    #                          np.array(hero_df_min_games['totalcount']))
+    # )
+    # winrate_high = winrate_weighted_ave + winrate_weighted_std
+    # winrate_low = winrate_weighted_ave - winrate_weighted_std
+    # buff_classifier = np.where(winrate_compare > winrate_high, 1, 0)
+    # buff_classifier = pd.Series(buff_classifier, index=winrate_compare.index)
+    # nerf_classifier = np.where(winrate_compare < winrate_low, 1, 0)
+    # nerf_classifier = pd.Series(nerf_classifier, index=winrate_compare.index)
 
     hero_df['winrate_compare'] = winrate_compare
-    hero_df['buffed'] = buff_classifier
-    hero_df['nerfed'] = nerf_classifier
+    # hero_df['buffed'] = buff_classifier
+    # hero_df['nerfed'] = nerf_classifier
 
     hero_all_selected_patches = pd.concat([hero_all_selected_patches, hero_df])
 
 hero_all_selected_patches.to_csv(f'heroallpatchesTEST.csv')
 
 # %%
-'''
+"""
 At this point, it is essential to separate the data so that our data is scaled only on data that falls within
 the training set, rather than all data contained in the train, test, and validation splits.
-'''
+"""
 # eliminate all heroes that aren't classified, or have null values
 hero_all_selected_patches = hero_all_selected_patches.dropna()
 
+hero_all_selected_patches.to_csv(f'heroallpatchesdropnaTEST.csv')
+
 # separate the data
-X = hero_all_selected_patches.iloc[:, :-3]
-y = hero_all_selected_patches[['buffed', 'nerfed']]
+X = hero_all_selected_patches.iloc[:, :-1]
+y = hero_all_selected_patches['winrate_compare']
 
 # do not touch X_val and y_val until you feel EXTREMELY CONFIDENT about your model
-X_full_train, X_test, y_full_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42, stratify=y)
+X_full_train, X_test, y_full_train, y_test = train_test_split(X, y, test_size=0.1, random_state=42)
 
-X_train, X_val, y_train, y_val = train_test_split(X_full_train, y_full_train, stratify=y_full_train)
+# set seed for validation creation to be used later in history reconstruction for ANN history
+seed = random.seed()
+X_train, X_val, y_train, y_val = train_test_split(X_full_train, y_full_train, random_state=seed)
 
 # %%
 # train a simple nearest neighbors classifier
@@ -438,12 +438,12 @@ if svc == 'yes':
 # todo add in CV
 # todo output confidence percent for each prediction
 
-'''
+"""
 Consider how obvious it is for humans to tell if a hero will be buffed or nerfed. Reddit sentiment analysis
 all of the whiners, how accurate are they vs the experts.
 Patch note based analysis to predict hero winrate.
 Players over 6k MMR.
-'''
+"""
 
 # train a neural network
 if ann == 'yes':
@@ -453,36 +453,66 @@ if ann == 'yes':
     weight initialization logic, etc
     '''
 
+    # scale the data
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_val_scaled = scaler.transform(X_val)
+    X_test = scaler.transform(X_test)
 
-    def build_classifier_model(n_hidden=3, n_neurons=100, learning_rate=3e-3, input_shape=[26]):
+    X_train.to_csv(f'Xtrainscaled.csv')
+
+    def build_regressor_model(n_hidden=1, n_neurons=30, learning_rate=3e-3, input_shape=[26]):
         model = keras.models.Sequential()
         model.add(keras.layers.InputLayer(input_shape=input_shape))
         for layer in range(n_hidden):
             model.add(keras.layers.Dense(n_neurons, activation='relu'))
-        model.add(keras.layers.Dense(2, activation='sigmoid'))
+        model.add(keras.layers.Dense(1))
         optimizer = keras.optimizers.SGD(learning_rate=learning_rate)
-        model.compile(loss='binary_crossentropy',
-                      optimizer=optimizer,
-                      metrics=['accuracy'])
+        model.compile(loss='mse', optimizer=optimizer)
         return model
 
+    keras_reg = keras.wrappers.scikit_learn.KerasRegressor(build_regressor_model)
 
-    # build a classifier model using build_model
-    model = build_classifier_model()
+    param_distribs = {
+        'n_hidden' : (1,5,10,15,20,25,30),
+        'n_neurons' : (1, 25, 50, 75, 100, 200, 300),
+        'learning_rate' : (0.0003, 0.003, 0.03, 0.3)
+    }
 
-    history = model.fit(X_train, y_train, epochs=100, validation_data=(X_val, y_val),
-                        callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=20)])
+    rnd_search_cv = RandomizedSearchCV(keras_reg, param_distribs, n_iter=5, cv=3, return_train_score=True)
+
+    rnd_search_fit = rnd_search_cv.fit(X_train, y_train, epochs=30, validation_data=(X_val, y_val),
+                            callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=20)])
+
+    model_predict = rnd_search_cv.predict(X_val)
+
+    st.text(f'Best parameters are {rnd_search_cv.best_params_}')
+    st.text(f'Best score is {rnd_search_cv.best_score_}')
+
+    st.dataframe(rnd_search_cv.cv_results_)
+
+    # take best results and generate history
+    params = rnd_search_cv.best_params_
+
+    model = build_regressor_model(n_hidden=params['n_hidden'], n_neurons=params['n_neurons'],
+                                  learning_rate=params['learning_rate'])
+
+    history = model.fit(X_train, y_train, epochs=200, validation_data=(X_val, y_val),
+                        callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)])
 
     # plot the results
-    # todo label axis, bro
-    pd.DataFrame(history.history).plot(figsize=(8, 5))
+    fig, ax = plt.subplots(figsize=(8,5))
+    pd.DataFrame(history.history).plot(ax=ax)
     plt.grid(True)
-    plt.gca().set_ylim(0, 1)  # set the vertical range between 0,1
+    # plt.gca().set_ylim(0, 1)  # set the vertical range between 0,1
     plt.title('ANN predicts DOTA2 hero buffs and nerfs')
-    plt.ylabel('Accuracy')
+    plt.ylabel('MSE')
     plt.xlabel('epoch')
     plt.savefig(f'Sequential_Neural_Net.png')
-    print('done with Neural Network')
+    st.pyplot(fig)
+    st.dataframe(hero_all_selected_patches)
+    st.dataframe(pd.DataFrame(model_predict, index=X_val.index))
+    st.text('done with Neural Network')
 
 # %%
 
