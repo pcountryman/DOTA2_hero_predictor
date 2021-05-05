@@ -29,7 +29,6 @@ from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.pipeline import Pipeline
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_selection import SelectKBest, chi2
 from sklearn.svm import NuSVC
 from sklearn.metrics import classification_report
@@ -37,7 +36,6 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 import math
-import tensorflow as tf
 from tensorflow import keras
 
 # which models to attempt to fit
@@ -49,7 +47,7 @@ ann = 'yes'
 min_games = 10
 
 # number of subpatches to analyze
-patch_ago = 20
+patch_ago = 2
 
 # create variable to investigate patches, where most recent patch is 1, two patches ago is 2, etc
 patch_url = 'https://dota2.fandom.com/wiki/Game_Versions'
@@ -461,6 +459,7 @@ if ann == 'yes':
 
     X_train.to_csv(f'Xtrainscaled.csv')
 
+
     def build_regressor_model(n_hidden=1, n_neurons=30, learning_rate=3e-3, input_shape=[26]):
         model = keras.models.Sequential()
         model.add(keras.layers.InputLayer(input_shape=input_shape))
@@ -471,18 +470,19 @@ if ann == 'yes':
         model.compile(loss='mse', optimizer=optimizer)
         return model
 
+
     keras_reg = keras.wrappers.scikit_learn.KerasRegressor(build_regressor_model)
 
     param_distribs = {
-        'n_hidden' : (1,5,10,15,20,25,30),
-        'n_neurons' : (1, 25, 50, 75, 100, 200, 300),
-        'learning_rate' : (0.0003, 0.003, 0.03, 0.3)
+        'n_hidden': (1, 5, 10, 15, 20, 25, 30),
+        'n_neurons': (1, 25, 50, 75, 100, 200, 300),
+        'learning_rate': (0.0003, 0.003, 0.03, 0.3)
     }
 
     rnd_search_cv = RandomizedSearchCV(keras_reg, param_distribs, n_iter=5, cv=3, return_train_score=True)
 
     rnd_search_fit = rnd_search_cv.fit(X_train, y_train, epochs=30, validation_data=(X_val, y_val),
-                            callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=20)])
+                                       callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=20)])
 
     model_predict = rnd_search_cv.predict(X_val)
 
@@ -501,7 +501,7 @@ if ann == 'yes':
                         callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)])
 
     # plot the results
-    fig, ax = plt.subplots(figsize=(8,5))
+    fig, ax = plt.subplots(figsize=(8, 5))
     pd.DataFrame(history.history).plot(ax=ax)
     plt.grid(True)
     # plt.gca().set_ylim(0, 1)  # set the vertical range between 0,1
