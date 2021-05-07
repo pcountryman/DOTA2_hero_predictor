@@ -337,7 +337,7 @@ for i in range(2, patch_ago + 1):
 
     hero_all_selected_patches = pd.concat([hero_all_selected_patches, hero_df])
 
-hero_all_selected_patches.to_csv(f'heroallpatchesTEST.csv')
+# hero_all_selected_patches.to_csv(f'heroallpatchesTEST.csv')
 
 # %%
 """
