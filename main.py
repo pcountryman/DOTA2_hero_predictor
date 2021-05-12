@@ -49,55 +49,8 @@ min_games = 10
 # number of subpatches to analyze
 patch_ago = 2
 
-# create variable to investigate patches, where most recent patch is 1, two patches ago is 2, etc
-patch_url = 'https://dota2.fandom.com/wiki/Game_Versions'
-patch_file = requests.get(patch_url)
-# print(f'{patch_file.raise_for_status()} errors pulling patch versions')
-patch_soup = BeautifulSoup(patch_file.text, 'html.parser')
-# locate the table with relevant information on heros during the patch in question
-patch_table = patch_soup.find('table', class_='wikitable')
-# empty list to store column titles in
-patch_table_columns = []
-
-# import a string of punctuation and whitespace to be removed from strings
-exclist = string.punctuation + string.whitespace
-# go through each column title in the table and write it to dota_columns
-for title in patch_table.find_all('th', class_='header'):
-    column_title = title.text.strip()
-    column_title = column_title.lower()
-
-    # remove punctuation and whitespace from column_title
-    column_title = column_title.translate(str.maketrans('', '', exclist))
-    patch_table_columns.append(column_title)
-patch_table_columns.pop(1)  # todo remove once highlights have been extracted
-
-# empty dictionary to store all patches, their hero buff/nerfs, and their initialization dates
-patch_dict = {}
-
-# go through each row in the patch_table and write all stats to a dictionary. keys=patch, values=dates and heroes
-for body in patch_table.find_all('tbody'):
-    # todo fix once first row is fixed on website
-    rows = body.find_all('tr')[2:]  # exclude first row as it is a header row
-    for row in rows:
-        patch_number = row.find('td').text.strip()
-        # todo extract highlights based on a in li
-        patch_date = row.find_all('td')[2].text.strip()
-        patch_number = patch_number.translate(str.maketrans('', '', exclist))
-        patch_dict[patch_number] = patch_date
-
-# todo change to dataframe once highlights are included
-# transform dictionary into a pandas series
-patch_df = pd.Series(patch_dict, name='patch')
-# convert into datetime info
-patch_datetime = pd.Series(pd.to_datetime(patch_df, format='%Y/%m/%d'), name='datetime')
-patch_year = patch_datetime.dt.year.rename('year')
-patch_month = patch_datetime.dt.month.rename('month')
-patch_day = patch_datetime.dt.day.rename('day')
-patch_time = pd.concat([patch_year, patch_month, patch_day], axis=1)
-
 # variables for algorithm
 ban_list = ['1stphasepicks', '2ndphasepicks', '3rdphasepicks', '1stphasebans', '2ndphasebans', '3rdphasebans']
-
 
 # weighted ave and stdev function
 def weighted_ave_and_std(values, weights):
@@ -123,234 +76,11 @@ def hero_cleanup(hero_df, total_games):
         hero_df[j] = hero_df[j] / total_games
     return hero_df
 
-
-def patch_grabber(now_year, now_month, now_day, next_year, next_month, next_day):
-    url_hero_stats = (f'https://www.datdota.com/heroes/performances?patch=7.29&patch=7.28&patch=7.27&patch=7.26'
-                      f'&patch=7.25&patch=7.24&patch=7.23&patch=7.22&patch=7.21&patch=7.20&patch=7.19&patch=7.18'
-                      f'&patch=7.17&patch=7.16&patch=7.15&patch=7.14&patch=7.13&patch=7.12&patch=7.11&patch=7.10'
-                      f'&patch=7.09&patch=7.08&patch=7.07&patch=7.06&patch=7.05&patch=7.04&patch=7.03&patch=7.02'
-                      f'&patch=7.01&patch=7.00&after={now_day}%2F{now_month}%2F{now_year}'
-                      f'&before={next_day}%2F{next_month}%2F{next_year}&duration=0%3B200'
-                      f'&duration-value-from=0&duration-value-to=200&tier=1&tier=2&tier=3'
-                      f'&valve-event=does-not-matter&threshold=1')
-
-    # use requests and bs to read the webpage as html txt file
-    example_file = requests.get(url_hero_stats)
-    # print(example_file.raise_for_status())
-    soup = BeautifulSoup(example_file.text, 'html.parser')
-
-    # locate the table with relevant information on heros during the patch in question
-    hero_table = soup.find('table', class_='table table-striped table-bordered table-hover data-table')
-
-    # import a string of punctuation and whitespace to be removed from strings
-    exclist = string.punctuation + string.whitespace
-    punc_no_period = '!"#$%&\'()*+,-/:;<=>?@[\\]^_`{|}~' + string.whitespace
-    table = str.maketrans(dict.fromkeys(punc_no_period))
-    # empty list to store column titles in
-    dota_columns = []
-
-    # go through each column title in the table and write it to dota_columns
-    for column in hero_table.find_all('thead'):
-        rows = column.find_all('tr')
-        for row in rows:
-            titles = row.find_all('th')
-            for title in titles:
-                column_title = title.text.strip()
-                column_title = column_title.lower()
-
-                # remove punctuation and whitespace from column_title
-                column_title = column_title.translate(str.maketrans('', '', exclist))
-                dota_columns.append(column_title)
-
-    # empty dictionary to store all hero statistics
-    hero_dict = {}
-
-    # go through each row in the hero_table and write all stats to a dictionary. keys=hero_name, values=all hero stats
-    for hero in hero_table.find_all('tbody'):
-        rows = hero.find_all('tr')
-        for row in rows:
-            dota_row = []
-            for i in range(1, len(row.find_all('td'))):
-                dota_stat = row.find_all('td')[i].text.strip()
-                dota_stat = dota_stat.rstrip('%')
-                clean_dota_stat = dota_stat.translate(table)
-                if clean_dota_stat == '':
-                    clean_dota_stat = None
-                dota_row.append(clean_dota_stat)
-            hero_name = row.find('td').text.strip()
-            hero_name = hero_name.translate(str.maketrans('', '', exclist))
-            hero_dict[hero_name] = dota_row
-
-    # transform dictionary into a pandas dataframe
-    hero_df = pd.DataFrame(hero_dict).T
-
-    # create a renaming dictionary because the column labels are currently 0, 1, etc
-    rename_dict = {}
-    for i in range(0, len(hero_df.columns)):
-        rename_dict[hero_df.columns[i]] = dota_columns[i + 1]
-    hero_df = hero_df.rename(columns=rename_dict)
-
-    # %%
-    # Now we need to assemble information on picks and bans
-
-    url_bans = ('https://www.datdota.com/drafts?faction=both&first-pick=either&tier=1&tier=2&tier=3'
-                '&valve-event=does-not-matter&patch=7.29&patch=7.28&patch=7.27&patch=7.26&patch=7.25'
-                '&patch=7.24&patch=7.23&patch=7.22&patch=7.21&patch=7.20&patch=7.19&patch=7.18&patch=7.17'
-                '&patch=7.16&patch=7.15&patch=7.14&patch=7.13&patch=7.12&patch=7.11&patch=7.10&patch=7.09'
-                '&patch=7.08&patch=7.07&patch=7.06&patch=7.05&patch=7.04&patch=7.03&patch=7.02&patch=7.01'
-                f'&patch=7.00&after={now_day}%2F{now_month}%2F{now_year}'
-                f'&before={next_day}%2F{next_month}%2F{next_year}&duration=0%3B200&duration-value-from=0'
-                f'&duration-value-to=200')
-
-    # use requests and bs to read the webpage as html txt file
-    ban_file = requests.get(url_bans)
-    # print(ban_file.raise_for_status())
-    ban_soup = BeautifulSoup(ban_file.text, 'html.parser')
-
-    # grab the number of total games
-    total_games_soup = ban_soup.select('#page-wrapper > div.row.border-bottom.white-bg.dashboard-header > div > '
-                                       'div.col-md-12 > div.table-responsive > h3')
-    total_games = total_games_soup[0].getText()
-    # create a list to eliminate letters and empty space
-    exc_alpha = string.ascii_letters + string.whitespace + string.punctuation
-    total_games = int(total_games.translate(str.maketrans('', '', exc_alpha)))
-    # print(f'Total number of games: {total_games}')
-
-    # locate the table with relevant information on heros during the patch in question
-    ban_table = ban_soup.find('table', class_='table table-striped table-bordered table-hover data-table')
-
-    # empty list to store column titles in
-    ban_columns = []
-
-    # go through each column title in the table and write it to dota_columns
-    for column in ban_table.find_all('thead'):
-        row = column.find('tr')
-        picks_and_bans = row.find_all('th')[1:3]
-        for p_b in picks_and_bans:
-            pick_or_ban = p_b.text
-            table_row = column.find_all('tr')[1]
-            if pick_or_ban == 'Picks':  # find a more elegant way to do this
-                titles = table_row.find_all('th')[0:7]
-            else:
-                titles = table_row.find_all('th')[7:13]
-            for title in titles:
-                column_title = (title.text + pick_or_ban).strip()
-                column_title = column_title.lower()
-
-                # remove punctuation and whitespace from column_title
-                column_title = column_title.translate(str.maketrans('', '', exclist))
-                ban_columns.append(column_title)
-
-    # empty dictionary to store all hero statistics
-    ban_dict = {}
-
-    # go through each row in the hero_table and write all stats to a dictionary. keys=hero_name, values=all hero stats
-    for ban in ban_table.find_all('tbody'):
-        rows = ban.find_all('tr')
-        for row in rows:
-            dota_row = []
-            for i in range(1, len(row.find_all('td'))):
-                dota_stat = row.find_all('td')[i].text.strip()
-                clean_dota_stat = dota_stat.translate(table)
-                if clean_dota_stat == '':
-                    clean_dota_stat = None
-                dota_row.append(clean_dota_stat)
-            hero_name = row.find('td').text.strip()
-            hero_name = hero_name.translate(str.maketrans('', '', exclist))
-            ban_dict[hero_name] = dota_row
-
-    # transform dictionary into a pandas dataframe
-    ban_df = pd.DataFrame(ban_dict).T
-
-    # create a renaming dictionary because the column labels are currently 0, 1, etc
-    rename_dict = {}
-    for i in range(0, len(ban_df.columns[1:])):
-        rename_dict[ban_df.columns[i]] = ban_columns[i + 1]
-    ban_df = ban_df.rename(columns=rename_dict)
-
-    # aggregate pick/ban info into main hero_df
-    for i in ban_list:
-        hero_df[i] = ban_df[i]
-
-    # transform the data into float and remove rows with empty data entries
-    # hero_df.to_csv(f'herodfTEST.csv')
-    hero_df = hero_df.dropna(axis=0)
-    hero_df = hero_df.astype('float')
-
-    return hero_df, total_games
-
-
-# %%
-'''
-Scan over all patches up to patch_ago to capture more data.
-'''
-
-
-# create definition to fetch year, month, and date for a given patch
-def patch_date_producer(i, patch_time):
-    now_patch_year = patch_time['year'].iloc[i]
-    now_patch_month = patch_time['month'].iloc[i]
-    now_patch_day = patch_time['day'].iloc[i]
-    return now_patch_year, now_patch_month, now_patch_day
-
-
-hero_all_selected_patches = pd.DataFrame()
-for i in range(2, patch_ago + 1):
-    # obtain year, month, day for all relevent patches
-    st.write(f'Current patch is {patch_time.index[i]}, Next patch is {patch_time.index[i - 1]}')
-    current_patch_year, current_patch_month, current_patch_day = patch_date_producer(i, patch_time)
-    next_patch_year, next_patch_month, next_patch_day = patch_date_producer(i - 1, patch_time)
-    next_next_patch_year, next_next_patch_month, next_next_patch_day = patch_date_producer(i - 2, patch_time)
-    hero_df, total_games = patch_grabber(current_patch_year, current_patch_month, current_patch_day,
-                                         next_patch_year, next_patch_month, next_patch_day)
-
-    # %%
-    next_hero_df, next_total_games = patch_grabber(next_patch_year, next_patch_month, next_patch_day,
-                                                   next_next_patch_year, next_next_patch_month,
-                                                   next_next_patch_day)
-
-    # todo following_hero_df limited by min_games in its dataset, or hero_df dataset?
-    winrate_compare = (hero_df['winrate'][hero_df['totalcount'] >= min_games] -
-                       next_hero_df['winrate'][next_hero_df['totalcount'] >= min_games]).dropna()
-
-    previous_hero_df_min_games = next_hero_df[next_hero_df['totalcount'] >= min_games]
-    hero_df_min_games = hero_df[hero_df['totalcount'] >= min_games]
-
-    # remove any hero not present in both patches
-    hero_difference = hero_df_min_games.index.difference(previous_hero_df_min_games.index)
-    hero_df_min_games = hero_df_min_games.drop(index=hero_difference)
-
-    # winrate_weighted_ave, winrate_weighted_std = (
-    #     weighted_ave_and_std(np.array(winrate_compare),
-    #                          np.array(hero_df_min_games['totalcount']))
-    # )
-    # winrate_high = winrate_weighted_ave + winrate_weighted_std
-    # winrate_low = winrate_weighted_ave - winrate_weighted_std
-    # buff_classifier = np.where(winrate_compare > winrate_high, 1, 0)
-    # buff_classifier = pd.Series(buff_classifier, index=winrate_compare.index)
-    # nerf_classifier = np.where(winrate_compare < winrate_low, 1, 0)
-    # nerf_classifier = pd.Series(nerf_classifier, index=winrate_compare.index)
-
-    hero_df['winrate_compare'] = winrate_compare
-    # hero_df['buffed'] = buff_classifier
-    # hero_df['nerfed'] = nerf_classifier
-
-    hero_all_selected_patches = pd.concat([hero_all_selected_patches, hero_df])
-
-# hero_all_selected_patches.to_csv(f'heroallpatchesTEST.csv')
-
-# %%
-"""
-At this point, it is essential to separate the data so that our data is scaled only on data that falls within
-the training set, rather than all data contained in the train, test, and validation splits.
-"""
 # eliminate all heroes that aren't classified, or have null values
-hero_all_selected_patches = hero_all_selected_patches.dropna()
-
-hero_all_selected_patches.to_csv(f'heroallpatchesdropnaTEST.csv')
+hero_all_selected_patches = pd.read_csv('HeroAllPatches.csv').dropna()
 
 # separate the data
-X = hero_all_selected_patches.iloc[:, :-1]
+X = hero_all_selected_patches.iloc[:, 1:-2]
 y = hero_all_selected_patches['winrate_compare']
 
 # do not touch X_val and y_val until you feel EXTREMELY CONFIDENT about your model
@@ -457,7 +187,7 @@ if ann == 'yes':
     X_val_scaled = scaler.transform(X_val)
     X_test = scaler.transform(X_test)
 
-    X_train.to_csv(f'Xtrainscaled.csv')
+    pd.DataFrame(X_train, columns=X.columns).to_csv(f'Xtrainscaled.csv')
 
 
     def build_regressor_model(n_hidden=1, n_neurons=30, learning_rate=3e-3, input_shape=[26]):
@@ -467,7 +197,7 @@ if ann == 'yes':
             model.add(keras.layers.Dense(n_neurons, activation='relu'))
         model.add(keras.layers.Dense(1))
         optimizer = keras.optimizers.SGD(learning_rate=learning_rate)
-        model.compile(loss='mse', optimizer=optimizer)
+        model.compile(loss='mse', optimizer=optimizer, metrics=[keras.metrics.RootMeanSquaredError()])
         return model
 
 
@@ -475,16 +205,18 @@ if ann == 'yes':
 
     param_distribs = {
         'n_hidden': (1, 5, 10, 15, 20, 25, 30),
-        'n_neurons': (1, 25, 50, 75, 100, 200, 300),
-        'learning_rate': (0.0003, 0.003, 0.03, 0.3)
+        'n_neurons': (25, 50, 75, 100, 200, 300),
+        'learning_rate': (0.0003, 0.003, 0.03, 0.3),
+        # 'batch_size': (5, 10, 15, 20, 25, 30, 35, 40)
     }
 
     rnd_search_cv = RandomizedSearchCV(keras_reg, param_distribs, n_iter=5, cv=3, return_train_score=True)
 
-    rnd_search_fit = rnd_search_cv.fit(X_train, y_train, epochs=30, validation_data=(X_val, y_val),
-                                       callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=20)])
+    rnd_search_fit = rnd_search_cv.fit(X_train, y_train, epochs=70, validation_data=(X_val_scaled, y_val),
+                                       callbacks=[keras.callbacks.EarlyStopping(
+                                           monitor='val_loss', patience=30)])
 
-    model_predict = rnd_search_cv.predict(X_val)
+    model_predict = rnd_search_cv.predict(X_val_scaled)
 
     st.text(f'Best parameters are {rnd_search_cv.best_params_}')
     st.text(f'Best score is {rnd_search_cv.best_score_}')
@@ -497,8 +229,9 @@ if ann == 'yes':
     model = build_regressor_model(n_hidden=params['n_hidden'], n_neurons=params['n_neurons'],
                                   learning_rate=params['learning_rate'])
 
-    history = model.fit(X_train, y_train, epochs=200, validation_data=(X_val, y_val),
-                        callbacks=[keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)])
+    history = model.fit(X_train, y_train, epochs=200, validation_data=(X_val_scaled, y_val),
+                        callbacks=[keras.callbacks.EarlyStopping(
+                            monitor='val_loss', patience=30)])
 
     # plot the results
     fig, ax = plt.subplots(figsize=(8, 5))
@@ -511,7 +244,9 @@ if ann == 'yes':
     plt.savefig(f'Sequential_Neural_Net.png')
     st.pyplot(fig)
     st.dataframe(hero_all_selected_patches)
-    st.dataframe(pd.DataFrame(model_predict, index=X_val.index))
+    val_df = pd.DataFrame(model_predict, index=X_val.index)
+    val_df['true_winrate_compare'] = y_val
+    st.dataframe(val_df)
     st.text('done with Neural Network')
 
 # %%
